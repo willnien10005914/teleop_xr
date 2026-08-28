@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
-"""Capture OpenArm VR heart-gesture demo with Playwright screenshots + WebSocket IK drive."""
+"""Record OpenArm VR heart-gesture demo (Chrome + IWER) and upload to gofile."""
 
 from __future__ import annotations
 
-import asyncio
-import json
 import os
-import ssl
 import subprocess
 import sys
 import time
+import urllib.request
+import ssl
 from pathlib import Path
 
-import websockets
 from playwright.sync_api import sync_playwright
 
 HOST = os.environ.get("TELEOP_HOST", "127.0.0.1")
@@ -20,85 +18,11 @@ PORT = int(os.environ.get("TELEOP_PORT", "4443"))
 OUT_DIR = Path(os.environ.get("DEMO_OUT_DIR", "/home/testpc-3/projects/xr/results"))
 FRAME_DIR = OUT_DIR / "vr_heart_frames"
 VIDEO_PATH = OUT_DIR / "openarm_vr_heart_demo.mp4"
-DURATION_S = float(os.environ.get("DEMO_DURATION_S", "24"))
-FPS = 2
+FPS = 4
 URL = f"https://{HOST}:{PORT}/"
 
 
-def _pose(x: float, y: float, z: float) -> dict:
-    return {
-        "position": {"x": x, "y": y, "z": z},
-        "orientation": {"w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0},
-    }
-
-
-def _gamepad(squeeze: bool, stick_y: float = 0.0) -> dict:
-    return {
-        "buttons": [
-            {"pressed": False, "touched": False, "value": 0.0},
-            {"pressed": squeeze, "touched": squeeze, "value": 1.0 if squeeze else 0.0},
-            {"pressed": False, "touched": False, "value": 0.0},
-            {"pressed": False, "touched": False, "value": 0.0},
-        ],
-        "axes": [0.0, stick_y, 0.0, stick_y],
-    }
-
-
-def _xr_state(t_ms: float, left_squeeze: bool, right_squeeze: bool, stick_y: float = 0.0) -> dict:
-    return {
-        "timestamp_unix_ms": t_ms,
-        "devices": [
-            {"role": "head", "handedness": "none", "pose": _pose(0.0, 1.6, 0.0)},
-            {
-                "role": "controller",
-                "handedness": "left",
-                "gripPose": _pose(-0.2, 1.2, -0.3),
-                "gamepad": _gamepad(left_squeeze, stick_y),
-            },
-            {
-                "role": "controller",
-                "handedness": "right",
-                "gripPose": _pose(0.2, 1.2, -0.3),
-                "gamepad": _gamepad(right_squeeze, stick_y),
-            },
-        ],
-        "fps": 60,
-        "fetch_latency_ms": 1.0,
-    }
-
-
-async def drive_xr_session(stop_event: asyncio.Event) -> None:
-    uri = f"wss://{HOST}:{PORT}/ws"
-    ssl_ctx = ssl._create_unverified_context()
-    async with websockets.connect(uri, ssl=ssl_ctx) as ws:
-        for _ in range(3):
-            try:
-                await asyncio.wait_for(ws.recv(), timeout=2.0)
-            except TimeoutError:
-                break
-
-        t0 = time.time()
-        while not stop_event.is_set() and time.time() - t0 < DURATION_S:
-            elapsed = time.time() - t0
-            t_ms = time.time() * 1000.0
-            left = right = False
-            stick_y = 0.0
-            if 2.0 <= elapsed < 14.0:
-                left = right = True
-            if 6.0 <= elapsed < 9.0:
-                stick_y = 0.85
-            payload = {
-                "type": "xr_state",
-                "client_id": "vr-heart-recorder",
-                "data": _xr_state(t_ms, left, right, stick_y),
-            }
-            await ws.send(json.dumps(payload))
-            await asyncio.sleep(0.05)
-
-
 def wait_for_server(timeout_s: float = 120.0) -> None:
-    import urllib.request
-
     deadline = time.time() + timeout_s
     ctx = ssl._create_unverified_context()
     while time.time() < deadline:
@@ -131,7 +55,7 @@ def encode_video() -> None:
     subprocess.run(cmd, check=True)
 
 
-def upload_video() -> str | None:
+def upload_gofile() -> str | None:
     if not VIDEO_PATH.exists():
         return None
     try:
@@ -139,20 +63,17 @@ def upload_video() -> str | None:
 
         with VIDEO_PATH.open("rb") as f:
             resp = requests.post(
-                "https://tmpfiles.org/api/v1/upload",
+                "https://upload.gofile.io/uploadFile",
                 files={"file": (VIDEO_PATH.name, f, "video/mp4")},
-                timeout=120,
+                timeout=180,
             )
         resp.raise_for_status()
         data = resp.json()
-        url = data.get("data", {}).get("url", "")
-        if url.startswith("http://"):
-            url = "https://" + url[len("http://") :]
-        if "tmpfiles.org/" in url and "/dl/" not in url:
-            url = url.replace("tmpfiles.org/", "tmpfiles.org/dl/", 1)
-        return url
+        if data.get("status") != "ok":
+            return None
+        return data["data"]["downloadPage"]
     except Exception as exc:
-        print(f"Upload failed: {exc}", file=sys.stderr)
+        print(f"gofile upload failed: {exc}", file=sys.stderr)
         return None
 
 
@@ -161,56 +82,97 @@ def capture_with_playwright() -> None:
     for old in FRAME_DIR.glob("frame_*.png"):
         old.unlink()
 
+    display = os.environ.get("DISPLAY", ":0")
+    headed = os.environ.get("HEADED", "1") != "0"
+
     with sync_playwright() as p:
         browser = p.chromium.launch(
-            headless=True,
+            headless=not headed,
             args=[
                 "--ignore-certificate-errors",
-                "--enable-webxr",
+                "--enable-webgl",
+                "--use-gl=angle",
                 "--enable-features=WebXR",
             ],
+            env={**os.environ, "DISPLAY": display} if headed else None,
         )
-        context = browser.new_context(
+        page = browser.new_context(
             viewport={"width": 1280, "height": 720},
             ignore_https_errors=True,
-        )
-        page = context.new_page()
+        ).new_page()
+
+        frames: list[bytes] = []
+
+        def grab(label: str = "") -> None:
+            shot: bytes | None = None
+            best_area = 0.0
+            for canvas in page.locator("canvas").all():
+                try:
+                    box = canvas.bounding_box()
+                    if not box:
+                        continue
+                    area = box["width"] * box["height"]
+                    if area > best_area:
+                        best_area = area
+                        shot = canvas.screenshot()
+                except Exception:
+                    continue
+            if shot is None:
+                shot = page.screenshot(full_page=False)
+            frames.append(shot)
+            if label:
+                print(f"  frame {len(frames):02d}: {label}")
+
         page.goto(URL, wait_until="networkidle", timeout=120_000)
+        page.wait_for_function("() => window.__iwer?.device", timeout=30_000)
+        grab("IWER ready")
+
+        page.get_by_role("button", name="VR Mode").click()
         page.wait_for_timeout(2000)
 
-        # Enter VR mode (IWER polyfill provides WebXR on desktop Chrome).
-        vr_btn = page.get_by_role("button", name="VR Mode")
-        if vr_btn.count():
-            vr_btn.click()
-            page.wait_for_timeout(8000)
+        # IWER requires granting the offered immersive session.
+        enter_xr = page.get_by_role("button", name="Enter XR")
+        if enter_xr.count():
+            enter_xr.click()
+            print("  clicked IWER Enter XR")
+        page.wait_for_timeout(4000)
 
-        # Hold LG + RG via IWER DevUI "Hold" toggles (2nd Hold per controller panel).
-        for panel_label in ("Controller [L]", "Controller [R]"):
-            panel = page.locator(f"text={panel_label}").locator("xpath=ancestor::div[1]")
-            grip_hold = panel.locator("text=Hold").nth(1)
-            if grip_hold.count():
-                grip_hold.click()
-        page.wait_for_timeout(1500)
+        # Hide 2D dashboard overlay; keep IWER DevUI visible.
+        page.add_style_tag(
+            content="main > .relative.z-10 { visibility: hidden !important; }"
+        )
+        page.wait_for_timeout(8000)
+        grab("VR session started")
 
-        # Nudge virtual thumbsticks forward during grip hold.
-        page.keyboard.down("KeyW")
-        page.keyboard.down("ArrowUp")
-        page.wait_for_timeout(1500)
-        page.keyboard.up("KeyW")
-        page.keyboard.up("ArrowUp")
-        page.wait_for_timeout(2000)
+        # Both grips at 100% via IWER API (reliable vs DevUI slider DOM).
+        page.evaluate(
+            """() => {
+                window.__iwer?.setGrip(1, 1);
+            }"""
+        )
+        grab("grips ON")
 
-        for panel_label in ("Controller [L]", "Controller [R]"):
-            panel = page.locator(f"text={panel_label}").locator("xpath=ancestor::div[1]")
-            grip_hold = panel.locator("text=Hold").nth(1)
-            if grip_hold.count():
-                grip_hold.click()
-        page.wait_for_timeout(2000)
+        for i in range(14):
+            page.wait_for_timeout(300)
+            grab(f"heart hold {i}")
 
-        total_frames = int(DURATION_S * FPS)
-        for i in range(total_frames):
-            page.screenshot(path=str(FRAME_DIR / f"frame_{i:04d}.png"), full_page=False)
-            time.sleep(1.0 / FPS)
+        page.evaluate("() => { window.__iwer?.setStick(-0.8, -0.8); }")
+        for i in range(8):
+            page.wait_for_timeout(300)
+            grab(f"joystick {i}")
+
+        page.evaluate(
+            """() => {
+                window.__iwer?.setGrip(0, 0);
+                window.__iwer?.setStick(0, 0);
+            }"""
+        )
+        for i in range(8):
+            page.wait_for_timeout(400)
+            grab(f"release {i}")
+
+        for i, png in enumerate(frames):
+            (FRAME_DIR / f"frame_{i:04d}.png").write_bytes(png)
 
         browser.close()
 
@@ -218,13 +180,13 @@ def capture_with_playwright() -> None:
 def main() -> int:
     print(f"Waiting for demo server at {URL}")
     wait_for_server()
-    print("Capturing Playwright screenshots while driving XR grips/joystick...")
+    print("Recording VR heart demo...")
     capture_with_playwright()
     print(f"Encoding {VIDEO_PATH}")
     encode_video()
-    link = upload_video()
+    link = upload_gofile()
     if link:
-        print(f"UPLOAD_URL={link}")
+        print(f"GOFILE_URL={link}")
     else:
         print(f"Video saved locally: {VIDEO_PATH}")
     return 0

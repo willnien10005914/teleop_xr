@@ -30,6 +30,26 @@ export function IwerBootstrap() {
 				const device = new XRDevice(metaQuest3);
 				device.installRuntime();
 				device.installDevUI(DevUI);
+
+				// Automation helper for demo recording (Playwright / IWER DevUI).
+				const iwerApi = {
+					device,
+					setGrip(left: number, right: number) {
+						device.controllers.left?.updateButtonValue("squeeze", left);
+						device.controllers.right?.updateButtonValue("squeeze", right);
+					},
+					setStick(leftY: number, rightY: number) {
+						device.controllers.left?.updateAxis("thumbstick", "y-axis", leftY);
+						device.controllers.right?.updateAxis("thumbstick", "y-axis", rightY);
+					},
+					grantSession() {
+						if (device.sessionOffered && !device.activeSession) {
+							device.grantOfferedSession();
+						}
+					},
+				};
+				(window as Window & { __iwer?: typeof iwerApi }).__iwer = iwerApi;
+
 				console.info("[IwerBootstrap] IWER installed (Meta Quest 3 emulation)");
 			} catch (err) {
 				console.error("[IwerBootstrap] Failed to install IWER:", err);
