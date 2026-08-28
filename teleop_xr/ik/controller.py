@@ -1,9 +1,20 @@
+import math
+
 import jax.numpy as jnp
 import jaxlie
 import numpy as np
 from loguru import logger
 from teleop_xr.utils.filter import WeightedMovingFilter
-from teleop_xr.messages import XRState, XRDeviceRole, XRHandedness, XRPose
+from teleop_xr.messages import (
+    XRGamepad,
+    XRState,
+    XRDeviceRole,
+    XRHandedness,
+    XRPose,
+)
+
+_JOY_DEADZONE = 0.15
+_JOY_SPEED_MPS = 0.35
 from teleop_xr.ik.robot import BaseRobot
 from teleop_xr.ik.solver import PyrokiSolver
 from teleop_xr.ik.commands import DeltaPose, EEDeltaCommand, EEAbsoluteCommand
@@ -51,6 +62,8 @@ class IKController:
         # Snapshots
         self.snapshot_xr = {}
         self.snapshot_robot = {}
+        self._joy_offset: dict[str, jnp.ndarray] = {}
+        self._last_ts_ms: float | None = None
 
         # Filter for joint configuration
         self.filter = None
@@ -77,6 +90,8 @@ class IKController:
         self.active = False
         self.snapshot_xr = {}
         self.snapshot_robot = {}
+        self._joy_offset = {}
+        self._last_ts_ms = None
         if self.filter is not None:
             self.filter.reset()
 
@@ -326,6 +341,59 @@ class IKController:
                     right_squeezed = is_squeezed
         return left_squeezed and right_squeezed
 
+    @staticmethod
+    def _thumbstick_xy(gamepad: XRGamepad | None) -> tuple[float, float]:
+        """Return xr-standard thumbstick (x, y), or (0, 0) inside the deadzone."""
+        if gamepad is None or not gamepad.axes:
+            return 0.0, 0.0
+        axes = [float(v) for v in gamepad.axes]
+        if len(axes) >= 4:
+            x, y = axes[2], axes[3]
+        else:
+            x, y = axes[0], axes[1]
+        if math.hypot(x, y) < _JOY_DEADZONE:
+            return 0.0, 0.0
+        return x, y
+
+    def _joystick_active(self, state: XRState) -> bool:
+        for device in state.devices:
+            if device.role != XRDeviceRole.CONTROLLER:
+                continue
+            x, y = self._thumbstick_xy(device.gamepad)
+            if x != 0.0 or y != 0.0:
+                return True
+        return False
+
+    def _integrate_joystick(self, state: XRState, dt: float) -> None:
+        """Accumulate thumbstick motion as EE translation in the robot base frame."""
+        for device in state.devices:
+            if device.role != XRDeviceRole.CONTROLLER:
+                continue
+            if device.handedness == XRHandedness.LEFT:
+                side = "left"
+            elif device.handedness == XRHandedness.RIGHT:
+                side = "right"
+            else:
+                continue
+            x, y = self._thumbstick_xy(device.gamepad)
+            # FLU: stick forward (-y) → +X, stick right (+x) → -Y
+            flu = jnp.array([-y, -x, 0.0]) * _JOY_SPEED_MPS * dt
+            delta = self.robot.ros_to_base @ flu
+            prev = self._joy_offset.get(side, jnp.zeros(3))
+            self._joy_offset[side] = prev + delta
+
+    def _offset_target(
+        self, target: jaxlie.SE3 | None, side: str
+    ) -> jaxlie.SE3 | None:
+        if target is None:
+            return None
+        offset = self._joy_offset.get(side)
+        if offset is None:
+            return target
+        return jaxlie.SE3.from_rotation_and_translation(
+            target.rotation(), target.translation() + offset
+        )
+
     def reset(self) -> None:
         """
         Resets the controller state, forcing it to re-take snapshots on the next step.
@@ -333,6 +401,8 @@ class IKController:
         self.active = False
         self.snapshot_xr = {}
         self.snapshot_robot = {}
+        self._joy_offset = {}
+        self._last_ts_ms = None
         if self.filter is not None:
             self.filter.reset()
         logger.info("[IKController] Reset triggered")
@@ -352,17 +422,21 @@ class IKController:
             return q_current
 
         is_deadman_active = self._check_deadman(state)
+        is_joystick_active = self._joystick_active(state)
+        is_commanded = is_deadman_active or is_joystick_active
         curr_xr_poses = self._get_device_poses(state)
 
         # Check if we have all necessary poses
         required_keys = self.robot.supported_frames
         has_all_poses = all(k in curr_xr_poses for k in required_keys)
 
-        if is_deadman_active and has_all_poses:
+        if is_commanded and has_all_poses:
             if not self.active:
                 # Engagement transition: take snapshots
                 self.active = True
                 self.snapshot_xr = curr_xr_poses
+                self._joy_offset = {}
+                self._last_ts_ms = state.timestamp_unix_ms
 
                 # Get initial robot FK poses
                 # Cast q_current to jnp.ndarray for JAX-based robot models
@@ -372,22 +446,40 @@ class IKController:
                 logger.info(f"[IKController] Initial Robot FK: {self.snapshot_robot}")
                 return q_current
 
+            dt = 0.01
+            if self._last_ts_ms is not None:
+                dt = float(
+                    np.clip(
+                        (state.timestamp_unix_ms - self._last_ts_ms) / 1000.0,
+                        0.001,
+                        0.05,
+                    )
+                )
+            self._last_ts_ms = state.timestamp_unix_ms
+            self._integrate_joystick(state, dt)
+
             # Active control
             target_L: jaxlie.SE3 | None = None
             target_R: jaxlie.SE3 | None = None
             target_Head: jaxlie.SE3 | None = None
 
             if "left" in required_keys:
-                target_L = self.compute_teleop_transform(
-                    curr_xr_poses["left"],
-                    self.snapshot_xr["left"],
-                    self.snapshot_robot["left"],
+                target_L = self._offset_target(
+                    self.compute_teleop_transform(
+                        curr_xr_poses["left"],
+                        self.snapshot_xr["left"],
+                        self.snapshot_robot["left"],
+                    ),
+                    "left",
                 )
             if "right" in required_keys:
-                target_R = self.compute_teleop_transform(
-                    curr_xr_poses["right"],
-                    self.snapshot_xr["right"],
-                    self.snapshot_robot["right"],
+                target_R = self._offset_target(
+                    self.compute_teleop_transform(
+                        curr_xr_poses["right"],
+                        self.snapshot_xr["right"],
+                        self.snapshot_robot["right"],
+                    ),
+                    "right",
                 )
             if "head" in required_keys:
                 target_Head = self.compute_teleop_transform(
@@ -420,6 +512,8 @@ class IKController:
             if self.active:
                 # Disengagement transition
                 self.active = False
+                self._joy_offset = {}
+                self._last_ts_ms = None
                 if self.filter is not None:
                     self.filter.reset()
             return q_current

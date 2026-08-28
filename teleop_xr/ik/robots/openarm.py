@@ -19,40 +19,48 @@ from teleop_xr.ik.robot import BaseRobot, Cost
 from teleop_xr import ram
 
 
+# v2.0 gripper base (preferred) then v1.0 wrist link (test fixtures / old URDFs).
+_LEFT_EE_CANDIDATES = ("openarm_left_ee_base_link", "openarm_left_link7")
+_RIGHT_EE_CANDIDATES = ("openarm_right_ee_base_link", "openarm_right_link7")
+
+
+def _resolve_ee_link(link_names: list[str], candidates: tuple[str, ...]) -> str:
+    for name in candidates:
+        if name in link_names:
+            return name
+    raise ValueError(f"Link {candidates[-1]} not found in URDF")
+
+
 class OpenArmRobot(BaseRobot):
     """
     OpenArm bimanual robot implementation for IK.
-    Uses the openarm_description package with bimanual=true.
+
+    Loads OpenArm v2.0 from openarm_description (default_bimanual + pinch
+    grippers). Older v1.0 URDFs that still use ``*_link7`` as the EE are
+    accepted when passed via ``urdf_string``.
     """
 
     def __init__(self, urdf_string: str | None = None, **kwargs: Any) -> None:
         super().__init__()
+        self._robot_preset = str(kwargs.get("robot_preset", "default_bimanual"))
         urdf = self._load_urdf(urdf_string)
 
         self.robot: pk.Robot = pk.Robot.from_urdf(urdf)
         self.robot_coll = pk.collision.RobotCollision.from_urdf(urdf)
 
-        # End effector links for bimanual setup
-        self.L_ee: str = "openarm_left_link7"
-        self.R_ee: str = "openarm_right_link7"
-
-        if self.L_ee in self.robot.links.names:
-            self.L_ee_link_idx: int = self.robot.links.names.index(self.L_ee)
-        else:
-            raise ValueError(f"Link {self.L_ee} not found in URDF")
-
-        if self.R_ee in self.robot.links.names:
-            self.R_ee_link_idx: int = self.robot.links.names.index(self.R_ee)
-        else:
-            raise ValueError(f"Link {self.R_ee} not found in URDF")
+        link_names = list(self.robot.links.names)
+        self.L_ee: str = _resolve_ee_link(link_names, _LEFT_EE_CANDIDATES)
+        self.R_ee: str = _resolve_ee_link(link_names, _RIGHT_EE_CANDIDATES)
+        self.L_ee_link_idx: int = self.robot.links.names.index(self.L_ee)
+        self.R_ee_link_idx: int = self.robot.links.names.index(self.R_ee)
 
     def _load_default_urdf(self) -> yourdfpy.URDF:
         repo_url = "https://github.com/enactic/openarm_description.git"
-        xacro_path = "urdf/robot/v10.urdf.xacro"
+        xacro_path = "assets/robot/openarm_v2.0/urdf/openarm_v20.urdf.xacro"
         xacro_args = {
-            "bimanual": "true",
-            "hand": "true",
-            "ros2_control": "false",
+            "robot_preset": self._robot_preset,
+            "use_fake_hardware": "true",
+            "collapse_internal_empty_links": "true",
         }
 
         self.urdf_path = str(

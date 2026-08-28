@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { IwerBootstrap } from "@/components/xr/IwerBootstrap";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +24,7 @@ export default function RootLayout({
 					"min-h-screen bg-background font-sans antialiased",
 				)}
 			>
+				<IwerBootstrap />
 				{children}
 			</body>
 		</html>

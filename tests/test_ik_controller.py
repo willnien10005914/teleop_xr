@@ -174,6 +174,56 @@ def test_ik_controller_deadman_requires_two_buttons():
     np.testing.assert_allclose(out, q0)
 
 
+def test_ik_controller_joystick_moves_without_grips():
+    robot = DummyRobot()
+    captured: dict[str, np.ndarray] = {}
+
+    class CaptureSolver:
+        def solve(self, target_L, target_R, target_Head, q_current):
+            captured["R"] = np.array(target_R.translation())
+            return jnp.array([1.0, 2.0])
+
+    controller = IKController(robot=robot, solver=_as_solver(CaptureSolver()))
+    idle_pad = _deadman_gamepad(False)
+    stick_pad = XRGamepad(
+        buttons=[
+            XRButtonState(pressed=False, touched=False, value=0.0),
+            XRButtonState(pressed=False, touched=False, value=0.0),
+        ],
+        axes=[0.0, 1.0],
+    )
+
+    def make_state(t: float, right_pad: XRGamepad) -> XRState:
+        return XRState(
+            timestamp_unix_ms=t,
+            devices=[
+                XRInputSource(
+                    role=XRDeviceRole.CONTROLLER,
+                    handedness=XRHandedness.LEFT,
+                    gripPose=_pose(0.0, 0.0, 0.0),
+                    gamepad=idle_pad,
+                ),
+                XRInputSource(
+                    role=XRDeviceRole.CONTROLLER,
+                    handedness=XRHandedness.RIGHT,
+                    gripPose=_pose(0.1, 0.0, 0.0),
+                    gamepad=right_pad,
+                ),
+                XRInputSource(role=XRDeviceRole.HEAD, pose=_pose(0.0, 0.2, 0.0)),
+            ],
+        )
+
+    q0 = np.array([0.0, 0.0])
+    out0 = controller.step(make_state(0.0, stick_pad), q0)
+    assert controller.active is True
+    np.testing.assert_allclose(out0, q0)
+
+    controller.step(make_state(100.0, stick_pad), q0)
+    assert "R" in captured
+    # Forward stick (-Y in XR gamepad) moves EE in -X at 0.35 m/s for clipped dt=0.05
+    assert captured["R"][0] < -0.01
+
+
 def test_ik_controller_no_solver():
     robot = DummyRobot()
     controller = IKController(robot=robot)

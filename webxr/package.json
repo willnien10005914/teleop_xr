@@ -14,7 +14,9 @@
 		"test:watch": "vitest"
 	},
 	"dependencies": {
+		"@iwer/devui": "^1.1.2",
 		"@iwsdk/core": "0.2.2",
+		"iwer": "^2.0.1",
 		"@pmndrs/uikit-horizon": "^1.0.61",
 		"@pmndrs/uikit-lucide": "^1.0.61",
 		"@radix-ui/react-label": "^2.1.8",

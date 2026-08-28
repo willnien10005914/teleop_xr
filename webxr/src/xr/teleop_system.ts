@@ -163,7 +163,7 @@ export class TeleopSystem extends createSystem({}) {
 	buildControllerDevice(
 		handedness: "left" | "right",
 		// biome-ignore lint/suspicious/noExplicitAny: legacy
-		raySpace: any,
+		gripSpace: any,
 		// biome-ignore lint/suspicious/noExplicitAny: legacy
 		gamepad: any,
 		isHandPrimary: boolean,
@@ -172,7 +172,7 @@ export class TeleopSystem extends createSystem({}) {
 			return null;
 		}
 
-		const pose = this.poseFromObject(raySpace);
+		const pose = this.poseFromObject(gripSpace);
 		if (!pose) {
 			return null;
 		}
@@ -341,7 +341,7 @@ export class TeleopSystem extends createSystem({}) {
 
 		const leftDevice = this.buildControllerDevice(
 			"left",
-			player?.raySpaces?.left,
+			player?.gripSpaces?.left ?? player?.raySpaces?.left,
 			input?.gamepads?.left,
 			Boolean(input?.isPrimary?.("hand", "left")),
 		);
@@ -351,7 +351,7 @@ export class TeleopSystem extends createSystem({}) {
 
 		const rightDevice = this.buildControllerDevice(
 			"right",
-			player?.raySpaces?.right,
+			player?.gripSpaces?.right ?? player?.raySpaces?.right,
 			input?.gamepads?.right,
 			Boolean(input?.isPrimary?.("hand", "right")),
 		);

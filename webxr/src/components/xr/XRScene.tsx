@@ -63,9 +63,9 @@ export function XRScene({ mode, onError, onExit }: XRSceneProps) {
 				}
 				worldRef.current = world;
 
-				// Always use immersive-ar to ensure stability and consistent reference space
-				// We simulate VR by adding a skybox in initWorld if passthrough is false
-				const sessionMode = SessionMode.ImmersiveAR;
+				// VR mode prefers immersive-vr (IWER / native headsets); passthrough uses AR.
+				const sessionMode =
+					mode === "vr" ? SessionMode.ImmersiveVR : SessionMode.ImmersiveAR;
 				const optionalFeatures = [
 					"local-floor",
 					"hand-tracking",
@@ -91,7 +91,6 @@ export function XRScene({ mode, onError, onExit }: XRSceneProps) {
 				}
 
 				sessionRef.current = session;
-				// Always use LocalFloor for AR-based session
 				world.renderer.xr.setReferenceSpaceType(ReferenceSpaceType.LocalFloor);
 				await world.renderer.xr.setSession(session);
 				world.session = session;

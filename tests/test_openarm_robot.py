@@ -201,9 +201,12 @@ def test_openarm_init_with_ram(tmp_path):
         assert mock_ram.get_resource.call_count == 1
         assert mock_ram.get_repo.called
 
-        # Verify xacro args include bimanual=true
+        # Verify xacro args select the v2.0 bimanual preset
         call_kwargs = mock_ram.get_resource.call_args[1]
-        assert call_kwargs["xacro_args"]["bimanual"] == "true"
+        assert call_kwargs["path_inside_repo"] == (
+            "assets/robot/openarm_v2.0/urdf/openarm_v20.urdf.xacro"
+        )
+        assert call_kwargs["xacro_args"]["robot_preset"] == "default_bimanual"
 
         assert robot.urdf_path == str(dummy_urdf)
         assert robot.mesh_path == str(tmp_path)

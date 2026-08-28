@@ -27,6 +27,8 @@ from teleop_xr.common_cli import CommonCLI
 from teleop_xr.messages import XRState
 from teleop_xr.camera_views import build_camera_views_config
 from teleop_xr.ik_utils import ensure_ik_dependencies, list_robots_or_exit
+from teleop_xr.ik.gestures.heart import run_heart_gesture
+from teleop_xr.ik.gestures.triggers import BothGripHeartTrigger
 from teleop_xr.events import (
     EventProcessor,
     ButtonEvent,
@@ -336,7 +338,10 @@ def generate_ik_controls_panel() -> Panel:
     text = Text()
     text.append("• Hold ", style="dim")
     text.append("BOTH GRIPS", style="bold yellow")
-    text.append(" to engage IK control\n", style="dim")
+    text.append(" 0.8s to play heart gesture (IK)\n", style="dim")
+    text.append("• Hold ", style="dim")
+    text.append("BOTH GRIPS", style="bold yellow")
+    text.append(" to engage IK teleop / use thumbstick offset\n", style="dim")
     text.append("• Double-click ", style="dim")
     text.append("DEADMAN (Grip)", style="bold magenta")
     text.append(" to reset joints\n", style="dim")
@@ -381,6 +386,8 @@ class IKWorker(threading.Thread):
         teleop: Teleop,
         state_container: dict[str, Any],
         logger: logging.Logger,
+        *,
+        heart_trigger: BothGripHeartTrigger | None = None,
     ):
         super().__init__(daemon=True)
         self.controller = controller
@@ -388,11 +395,35 @@ class IKWorker(threading.Thread):
         self.teleop = teleop
         self.state_container = state_container
         self.logger = logger
+        self.heart_trigger = heart_trigger or BothGripHeartTrigger()
+        self.heart_gesture_lock = threading.Lock()
+        self.heart_gesture_running = False
         self.latest_xr_state: Optional[XRState] = None
         self.new_state_event = threading.Event()
         self.running = True
         self.teleop_loop = None  # Will be set when on_xr_update runs
         self._worker_lock = threading.Lock()
+
+    def _start_heart_gesture(self, q_current: np.ndarray) -> np.ndarray:
+        with self.heart_gesture_lock:
+            if self.heart_gesture_running:
+                return q_current
+            self.heart_gesture_running = True
+
+        try:
+            self.logger.info("Both grips held — triggering heart gesture")
+            return run_heart_gesture(
+                self.controller,
+                self.robot,
+                self.teleop,
+                q_current,
+                self.teleop_loop,
+                self.logger,
+            )
+        finally:
+            with self.heart_gesture_lock:
+                self.heart_gesture_running = False
+            self.controller.reset()
 
     def update_state(self, state: XRState):
         """Thread-safe update of the latest state."""
@@ -431,8 +462,17 @@ class IKWorker(threading.Thread):
 
             try:
                 with self._worker_lock:
+                    if self.heart_gesture_running:
+                        continue
+
                     q_current = self.state_container["q"]
                     was_active = self.controller.active
+
+                    if self.heart_trigger.update(state):
+                        q_current = self._start_heart_gesture(np.array(q_current))
+                        self.state_container["q"] = q_current
+                        self.state_container["active"] = False
+                        continue
 
                     t0 = time.perf_counter()
                     new_config = np.array(self.controller.step(state, q_current))
@@ -736,6 +776,7 @@ def main():
 
     # --- Event Processor Setup ---
     processor: Optional[EventProcessor] = None
+
     if cli.enable_events:
         processor = EventProcessor(cli.event_settings())
 
@@ -791,7 +832,14 @@ def main():
 
     # --- IK Worker Setup ---
     if cli.mode == "ik" and controller and robot:
-        ik_worker = IKWorker(controller, robot, teleop, state_container, logger)
+        ik_worker = IKWorker(
+            controller,
+            robot,
+            teleop,
+            state_container,
+            logger,
+            heart_trigger=BothGripHeartTrigger(threshold_ms=800.0),
+        )
         ik_worker.start()
 
     if controller is not None:
