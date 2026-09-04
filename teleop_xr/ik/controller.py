@@ -355,6 +355,44 @@ class IKController:
             return 0.0, 0.0
         return x, y
 
+    @staticmethod
+    def _trigger_value(gamepad: XRGamepad | None) -> float:
+        """xr-standard index-finger trigger analog, 0 (released) to 1 (pressed)."""
+        if gamepad is None or not gamepad.buttons:
+            return 0.0
+        button = gamepad.buttons[0]
+        value = float(button.value)
+        if button.pressed and value <= 0.0:
+            value = 1.0
+        return float(np.clip(value, 0.0, 1.0))
+
+    def apply_gripper(self, state: XRState, q: np.ndarray) -> np.ndarray:
+        """Drive gripper joints from each controller's index-finger trigger."""
+        bindings = self.robot.gripper_bindings()
+        if not bindings:
+            return q
+
+        names = self.robot.actuated_joint_names
+        q_out = np.array(q, dtype=float, copy=True)
+        trigger_by_side: dict[str, float] = {}
+        for device in state.devices:
+            if device.role != XRDeviceRole.CONTROLLER:
+                continue
+            if device.handedness == XRHandedness.LEFT:
+                trigger_by_side["left"] = self._trigger_value(device.gamepad)
+            elif device.handedness == XRHandedness.RIGHT:
+                trigger_by_side["right"] = self._trigger_value(device.gamepad)
+
+        for side, joints in bindings.items():
+            closed_amount = trigger_by_side.get(side, 0.0)
+            for joint_name, q_open, q_closed in joints:
+                try:
+                    idx = names.index(joint_name)
+                except ValueError:
+                    continue
+                q_out[idx] = q_open + closed_amount * (q_closed - q_open)
+        return q_out
+
     def _joystick_active(self, state: XRState) -> bool:
         for device in state.devices:
             if device.role != XRDeviceRole.CONTROLLER:

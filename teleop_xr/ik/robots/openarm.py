@@ -129,10 +129,10 @@ class OpenArmRobot(BaseRobot):
             "openarm_right_joint5": 0.0,
             "openarm_right_joint6": 0.0,
             "openarm_right_joint7": 0.0,
-            "openarm_left_finger_joint1": 0.0,
-            "openarm_left_finger_joint2": 0.0,
-            "openarm_right_finger_joint1": 0.0,
-            "openarm_right_finger_joint2": 0.0,
+            "openarm_left_finger_joint1": 0.7854,
+            "openarm_left_finger_joint2": 0.7854,
+            "openarm_right_finger_joint1": -0.7854,
+            "openarm_right_finger_joint2": -0.7854,
         }
 
         config_list = []
@@ -140,6 +140,20 @@ class OpenArmRobot(BaseRobot):
             config_list.append(default_pose.get(name, 0.0))
 
         return jnp.array(config_list)
+
+    @override
+    def gripper_bindings(self) -> dict[str, list[tuple[str, float, float]]]:
+        # Pinch gripper: 0 = closed. Released trigger = open, pressed = closed.
+        return {
+            "left": [
+                ("openarm_left_finger_joint1", 0.7854, 0.0),
+                ("openarm_left_finger_joint2", 0.7854, 0.0),
+            ],
+            "right": [
+                ("openarm_right_finger_joint1", -0.7854, 0.0),
+                ("openarm_right_finger_joint2", -0.7854, 0.0),
+            ],
+        }
 
     @override
     def build_costs(

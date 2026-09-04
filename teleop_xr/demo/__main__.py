@@ -338,10 +338,10 @@ def generate_ik_controls_panel() -> Panel:
     text = Text()
     text.append("• Hold ", style="dim")
     text.append("BOTH GRIPS", style="bold yellow")
-    text.append(" 0.8s to play heart gesture (IK)\n", style="dim")
-    text.append("• Hold ", style="dim")
-    text.append("BOTH GRIPS", style="bold yellow")
-    text.append(" to engage IK teleop / use thumbstick offset\n", style="dim")
+    text.append(" (middle finger) to enable IK, then move the controllers\n", style="dim")
+    text.append("• Index-finger ", style="dim")
+    text.append("TRIGGER", style="bold yellow")
+    text.append(" closes that arm's gripper (release to open)\n", style="dim")
     text.append("• Double-click ", style="dim")
     text.append("DEADMAN (Grip)", style="bold magenta")
     text.append(" to reset joints\n", style="dim")
@@ -395,7 +395,7 @@ class IKWorker(threading.Thread):
         self.teleop = teleop
         self.state_container = state_container
         self.logger = logger
-        self.heart_trigger = heart_trigger or BothGripHeartTrigger()
+        self.heart_trigger = heart_trigger
         self.heart_gesture_lock = threading.Lock()
         self.heart_gesture_running = False
         self.latest_xr_state: Optional[XRState] = None
@@ -468,7 +468,9 @@ class IKWorker(threading.Thread):
                     q_current = self.state_container["q"]
                     was_active = self.controller.active
 
-                    if self.heart_trigger.update(state):
+                    if self.heart_trigger is not None and self.heart_trigger.update(
+                        state
+                    ):
                         q_current = self._start_heart_gesture(np.array(q_current))
                         self.state_container["q"] = q_current
                         self.state_container["active"] = False
@@ -476,6 +478,7 @@ class IKWorker(threading.Thread):
 
                     t0 = time.perf_counter()
                     new_config = np.array(self.controller.step(state, q_current))
+                    new_config = self.controller.apply_gripper(state, new_config)
                     dt = time.perf_counter() - t0
 
                     self.state_container["solve_time"] = dt
@@ -838,7 +841,6 @@ def main():
             teleop,
             state_container,
             logger,
-            heart_trigger=BothGripHeartTrigger(threshold_ms=800.0),
         )
         ik_worker.start()
 

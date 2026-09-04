@@ -602,3 +602,57 @@ def test_ik_controller_submit_ee_absolute_targets_updates_multiple_frames():
     )
 
     np.testing.assert_allclose(out, [4.0, 5.0])
+
+
+class GripperDummyRobot(DummyRobot):
+    def gripper_bindings(self) -> dict[str, list[tuple[str, float, float]]]:
+        return {
+            "left": [("left_finger", 0.8, 0.0)],
+            "right": [("right_finger", -0.8, 0.0)],
+        }
+
+    @property
+    def actuated_joint_names(self) -> list[str]:
+        return ["joint1", "joint2", "left_finger", "right_finger"]
+
+
+def test_ik_controller_trigger_closes_and_release_opens_gripper():
+    robot = GripperDummyRobot()
+    controller = IKController(robot=robot)
+    q0 = np.array([0.0, 0.0, 0.8, -0.8])
+
+    def state_with_triggers(left_v: float, right_v: float) -> XRState:
+        def pad(value: float) -> XRGamepad:
+            return XRGamepad(
+                buttons=[
+                    XRButtonState(
+                        pressed=value >= 0.9, touched=False, value=value
+                    ),
+                    XRButtonState(pressed=False, touched=False, value=0.0),
+                ],
+                axes=[],
+            )
+
+        return XRState(
+            timestamp_unix_ms=1.0,
+            devices=[
+                XRInputSource(
+                    role=XRDeviceRole.CONTROLLER,
+                    handedness=XRHandedness.LEFT,
+                    gripPose=_pose(0.0, 0.0, 0.0),
+                    gamepad=pad(left_v),
+                ),
+                XRInputSource(
+                    role=XRDeviceRole.CONTROLLER,
+                    handedness=XRHandedness.RIGHT,
+                    gripPose=_pose(0.1, 0.0, 0.0),
+                    gamepad=pad(right_v),
+                ),
+            ],
+        )
+
+    closed = controller.apply_gripper(state_with_triggers(1.0, 1.0), q0)
+    np.testing.assert_allclose(closed[2:], [0.0, 0.0])
+
+    opened = controller.apply_gripper(state_with_triggers(0.0, 0.0), closed)
+    np.testing.assert_allclose(opened[2:], [0.8, -0.8])

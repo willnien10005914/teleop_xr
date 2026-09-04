@@ -129,6 +129,15 @@ class BaseRobot(ABC):
         """
         return {"left", "right", "head"}
 
+    def gripper_bindings(self) -> dict[str, list[tuple[str, float, float]]]:
+        """Map controller handedness to gripper joints.
+
+        Each entry is ``(joint_name, open_value, closed_value)``. Empty by
+        default so robots without grippers are unchanged.
+        """
+
+        return {}
+
     @property
     def default_speed_ratio(self) -> float:
         """

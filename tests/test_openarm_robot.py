@@ -183,6 +183,16 @@ def test_openarm_default_config():
     assert isinstance(q, jax.Array)
 
 
+def test_openarm_gripper_bindings():
+    robot = OpenArmRobot(urdf_string=MINIMAL_OPENARM_URDF)
+    bindings = robot.gripper_bindings()
+    assert "left" in bindings
+    assert "right" in bindings
+    assert bindings["left"][0][0] == "openarm_left_finger_joint1"
+    assert bindings["left"][0][1] == 0.7854
+    assert bindings["left"][0][2] == 0.0
+
+
 def test_openarm_init_with_ram(tmp_path):
     """Test initialization using RAM (default)."""
     dummy_urdf = tmp_path / "v10.urdf"
