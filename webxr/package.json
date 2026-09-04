@@ -34,7 +34,8 @@
 		"three": "npm:super-three@0.177.0",
 		"three-stdlib": "^2.36.1",
 		"urdf-loader": "^0.12.6",
-		"zustand": "^5.0.11"
+		"zustand": "^5.0.11",
+		"@webxr-input-profiles/assets": "^1.0.20"
 	},
 	"devDependencies": {
 		"@gltf-transform/core": "^4.3.0",

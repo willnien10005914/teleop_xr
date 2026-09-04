@@ -1,9 +1,13 @@
 "use client";
 
-import { ReferenceSpaceType, SessionMode } from "@iwsdk/core";
+import { ReferenceSpaceType } from "@iwsdk/core";
 import { useCallback, useEffect, useRef } from "react";
 import type { XRMode } from "@/app/page";
 import { initWorld } from "@/xr";
+import {
+	buildXrSessionInit,
+	requestPreferredXrSession,
+} from "@/xr/session";
 
 type XRSceneProps = {
 	mode: XRMode;
@@ -63,36 +67,38 @@ export function XRScene({ mode, onError, onExit }: XRSceneProps) {
 				}
 				worldRef.current = world;
 
-				// VR mode prefers immersive-vr (IWER / native headsets); passthrough uses AR.
-				const sessionMode =
-					mode === "vr" ? SessionMode.ImmersiveVR : SessionMode.ImmersiveAR;
-				const optionalFeatures = [
-					"local-floor",
-					"hand-tracking",
-					"anchors",
-					"layers",
-					"dom-overlay",
-				];
-				const sessionInit: XRSessionInit = {
-					optionalFeatures,
-					domOverlay: { root: document.body },
-				};
+				const sessionInit = buildXrSessionInit();
 
-				console.log(`[XRScene] Requesting session: ${sessionMode}`);
+				console.log(`[XRScene] Requesting XR session for mode: ${mode}`);
 				const xr = navigator.xr;
 				if (!xr) {
 					throw new Error("WebXR not available");
 				}
 
-				const session = await xr.requestSession(sessionMode, sessionInit);
+				const session = await requestPreferredXrSession(
+					xr,
+					mode,
+					sessionInit,
+				);
 				if (!isMounted) {
 					await session.end();
 					return;
 				}
 
 				sessionRef.current = session;
-				world.renderer.xr.setReferenceSpaceType(ReferenceSpaceType.LocalFloor);
-				await world.renderer.xr.setSession(session);
+				try {
+					world.renderer.xr.setReferenceSpaceType(
+						ReferenceSpaceType.LocalFloor,
+					);
+					await world.renderer.xr.setSession(session);
+				} catch (refErr) {
+					console.warn(
+						"[XRScene] local-floor failed, falling back to local:",
+						refErr,
+					);
+					world.renderer.xr.setReferenceSpaceType(ReferenceSpaceType.Local);
+					await world.renderer.xr.setSession(session);
+				}
 				world.session = session;
 
 				session.addEventListener(
@@ -106,7 +112,7 @@ export function XRScene({ mode, onError, onExit }: XRSceneProps) {
 					{ once: true },
 				);
 
-				console.log(`[XRScene] Session started: ${sessionMode}`);
+				console.log(`[XRScene] Session started (ui mode: ${mode})`);
 			} catch (err) {
 				console.error("[XRScene] Failed to initialize:", err);
 				reportError(

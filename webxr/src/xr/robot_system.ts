@@ -18,7 +18,7 @@ import {
 	Texture,
 	Vector3,
 } from "three";
-import { ColladaLoader, GLTFLoader, STLLoader } from "three-stdlib";
+import { ColladaLoader, DRACOLoader, GLTFLoader, STLLoader } from "three-stdlib";
 import URDFLoader from "urdf-loader";
 import { useAppStore } from "../lib/store";
 import type { Entity } from "./panels";
@@ -29,12 +29,15 @@ interface URDFRobot extends Object3D {
 
 export class RobotModelSystem extends createSystem({}) {
 	private loader!: URDFLoader;
+	private dracoLoader!: DRACOLoader;
 	private robotEntity: Entity | null = null;
 	private robotModel: Object3D | null = null;
 	private axesHelper: AxesHelper | null = null;
 	private loadingEntity: Entity | null = null;
 
 	init() {
+		this.dracoLoader = new DRACOLoader();
+		this.dracoLoader.setDecoderPath("/draco/gltf/");
 		this.loader = new URDFLoader();
 		this.loader.packages = (pkg: string) => `/robot_assets/${pkg}`;
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -47,7 +50,9 @@ export class RobotModelSystem extends createSystem({}) {
 		) => {
 			const ext = path.split(".").pop()?.toLowerCase();
 			if (ext === "glb" || ext === "gltf") {
-				new GLTFLoader(manager).load(
+				const gltfLoader = new GLTFLoader(manager);
+				gltfLoader.setDRACOLoader(this.dracoLoader);
+				gltfLoader.load(
 					path,
 					(gltf) => done(gltf.scene),
 					undefined,

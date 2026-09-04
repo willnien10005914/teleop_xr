@@ -43,7 +43,23 @@ export default function Home() {
 					onExit={handleExit}
 				/>
 			)}
-			<div className="relative z-10 mx-auto max-w-5xl space-y-8">
+			{selectedMode !== null ? (
+				<div className="relative z-10">
+					<Button
+						size="lg"
+						className="gap-2"
+						onClick={handleExit}
+						variant="destructive"
+					>
+						<X className="h-4 w-4" />
+						Exit XR
+					</Button>
+				</div>
+			) : null}
+			<div
+				className="relative z-10 mx-auto max-w-5xl space-y-8"
+				hidden={selectedMode !== null}
+			>
 				<header className="flex items-center justify-between rounded-xl border bg-background/60 px-6 py-5 backdrop-blur">
 					<div>
 						<h1 className="text-3xl font-bold tracking-tight">TeleopXR</h1>
@@ -52,38 +68,24 @@ export default function Home() {
 						</p>
 					</div>
 					<div className="flex items-center gap-3">
-						{selectedMode === null ? (
-							<>
-								<Button
-									size="lg"
-									className="gap-2"
-									onClick={handleEnterVR}
-									variant="default"
-								>
-									<Monitor className="h-4 w-4" />
-									VR Mode
-								</Button>
-								<Button
-									size="lg"
-									className="gap-2"
-									onClick={handleEnterPassthrough}
-									variant="secondary"
-								>
-									<Glasses className="h-4 w-4" />
-									Passthrough
-								</Button>
-							</>
-						) : (
-							<Button
-								size="lg"
-								className="gap-2"
-								onClick={handleExit}
-								variant="destructive"
-							>
-								<X className="h-4 w-4" />
-								Exit XR
-							</Button>
-						)}
+						<Button
+							size="lg"
+							className="gap-2"
+							onClick={handleEnterVR}
+							variant="default"
+						>
+							<Monitor className="h-4 w-4" />
+							VR Mode
+						</Button>
+						<Button
+							size="lg"
+							className="gap-2"
+							onClick={handleEnterPassthrough}
+							variant="secondary"
+						>
+							<Glasses className="h-4 w-4" />
+							Passthrough
+						</Button>
 					</div>
 				</header>
 

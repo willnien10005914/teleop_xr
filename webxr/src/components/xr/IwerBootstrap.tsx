@@ -20,6 +20,23 @@ export function IwerBootstrap() {
 				return;
 			}
 
+			// Do not replace a real headset runtime (Samsung XR, Quest, etc.)
+			// with the desktop IWER Quest 3 polyfill.
+			if (navigator.xr) {
+				try {
+					const nativeVr = await navigator.xr.isSessionSupported("immersive-vr");
+					const nativeAr = await navigator.xr.isSessionSupported("immersive-ar");
+					if (nativeVr || nativeAr) {
+						console.info(
+							"[IwerBootstrap] Native WebXR detected, skipping IWER emulator",
+						);
+						return;
+					}
+				} catch {
+					// Fall through to IWER if capability checks fail (desktop Chrome).
+				}
+			}
+
 			try {
 				const [{ XRDevice, metaQuest3 }, { DevUI }] = await Promise.all([
 					import("iwer"),

@@ -11,6 +11,7 @@ import { parse } from "@pmndrs/uikitml";
 import fs from "fs-extra";
 import { glob } from "glob";
 import sharp from "sharp";
+import { vendorXrRuntimeAssets } from "./vendor-xr-assets.mjs";
 
 const VERBOSE = true;
 
@@ -177,6 +178,7 @@ async function compileUIKit() {
 async function main() {
 	try {
 		console.log("🚀 Starting asset optimization...");
+		await vendorXrRuntimeAssets();
 		await optimizeModels();
 		await compileUIKit();
 		console.log("🏁 Asset optimization complete");

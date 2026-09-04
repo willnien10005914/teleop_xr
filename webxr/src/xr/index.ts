@@ -26,6 +26,10 @@ import {
 	SphereGeometry,
 } from "three";
 import { getCameraEnabled, onCameraConfigChanged } from "./camera_config";
+import {
+	configureLocalXrDecoders,
+	patchAssetManagerForLocalCdn,
+} from "./local_assets";
 import { CameraSettingsSystem } from "./camera_settings_system";
 import {
 	getCameraViewsConfig,
@@ -79,6 +83,7 @@ export const initWorld = async (
 	initialPassthrough = true,
 ) => {
 	initConsoleStream();
+	patchAssetManagerForLocalCdn();
 
 	// Always initialize as AR to support consistent session features
 	// We simulate VR by adding an opaque background if passthrough is disabled
@@ -96,18 +101,18 @@ export const initWorld = async (
 			// Optional structured features; layers/local-floor are offered by default
 			features: {
 				handTracking: true,
-				anchors: true,
+				anchors: false,
 				hitTest: false,
 				planeDetection: false,
 				meshDetection: false,
-				layers: true,
+				layers: false,
 			},
 		},
 		features: {
 			locomotion: false,
 			grabbing: true,
 			physics: false,
-			sceneUnderstanding: true,
+			sceneUnderstanding: false,
 			spatialUI: {
 				kits: [
 					{ ...horizonKit, Toggle: horizonKit.Toggle },
@@ -128,6 +133,8 @@ export const initWorld = async (
 			},
 		},
 	});
+
+	configureLocalXrDecoders(world);
 
 	const { camera } = world;
 

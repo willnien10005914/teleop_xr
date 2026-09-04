@@ -58,11 +58,29 @@ function sendLog(level: string, args: any[]) {
 	}
 }
 
+let crashHooksInstalled = false;
+
 export function initConsoleStream() {
 	useAppStore.subscribe((state) => {
 		currentLogLevel = state.advancedSettings.logLevel;
 	});
 	currentLogLevel = useAppStore.getState().advancedSettings.logLevel;
+
+	if (!crashHooksInstalled) {
+		crashHooksInstalled = true;
+		window.addEventListener("error", (event) => {
+			sendLog("error", [
+				`[window.error] ${event.message} @ ${event.filename}:${event.lineno}`,
+			]);
+		});
+		window.addEventListener("unhandledrejection", (event) => {
+			const reason =
+				event.reason instanceof Error
+					? `${event.reason.message}\n${event.reason.stack ?? ""}`
+					: String(event.reason);
+			sendLog("error", [`[unhandledrejection] ${reason}`]);
+		});
+	}
 
 	const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
 	const wsUrl = `${protocol}//${window.location.host}/ws`;

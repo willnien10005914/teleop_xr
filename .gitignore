@@ -7,6 +7,9 @@ webxr/node_modules/
 webxr/dist/
 webxr/.next/
 webxr/out/
+webxr/public/webxr-input-profiles/
+webxr/public/draco/
+webxr/public/basis/
 .worktrees/
 uv.lock
 teleop_xr/_version.py
